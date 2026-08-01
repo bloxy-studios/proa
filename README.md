@@ -78,7 +78,7 @@ for await (const step of task.steps()) console.log(step.thought, "→", step.act
 pnpm --filter @proa/browser dev     # requires a display; macOS-first for v0.1
 ```
 
-> The desktop shell (Electron) is built and end-to-end tested in CI on macOS (and Linux under `xvfb`). See [ADR-0007](docs/DECISIONS.md) and [KNOWN_GAPS.md](KNOWN_GAPS.md) for why, and what that means for the packaged artifact.
+> The desktop shell (Electron) is built with `electron-vite` and end-to-end tested in CI on macOS — the shell renders, the palette works, the agent console is present. Distributable `.app` packaging (electron-builder) is a v0.2 item; run it in dev for now. See [ADR-0007](docs/DECISIONS.md) and [KNOWN_GAPS.md](KNOWN_GAPS.md).
 
 ## Drive it from Claude Code (MCP)
 

@@ -45,7 +45,8 @@
 - [x] Fixture site (login/form/table/pagination/injection); both themes; empty states
 - [x] README (hero + palette + HUD captures + quickstart + non-goals + MCP section)
 - [x] ARCHITECTURE, SECURITY, DECISIONS, CONTRIBUTING, DEMO, KNOWN_GAPS
-- [x] Milestone tags; **v0.1.0** release (macOS artifact produced by the CI release job)
+- [x] Milestone tags; **v0.1.0** release created. App builds + e2e green on macOS CI; distributable
+      .app packaging (electron-builder) deferred to v0.2 and logged (KNOWN_GAPS, ADR-0007).
 
 ## Session log
 - 2026-08-01 — Full build in one session: scaffold + all 8 packages + fixture + benchmark +

@@ -14,10 +14,16 @@ Electron desktop app cannot be launched or packaged there (ADR-0007). Consequenc
   `pnpm verify` + `pnpm --filter @proa/benchmark bench`. The CLI (`run`, `trace ls/replay/export`)
   and typed extraction are smoke-tested here too.
 - **Verified in CI, not on the build machine:** the Electron app's runtime, the Playwright-on-Electron
-  e2e, the captured live screenshots, and the packaged `.app`. The `apps/browser` code **typechecks**
-  (`pnpm --filter @proa/browser typecheck`) and is architecturally faithful, but its *runtime* has
-  not executed on the build machine. Treat the macOS CI job + release job as the source of truth for
-  the GUI. If you are packaging locally on a Mac, follow `pnpm --filter @proa/browser package`.
+  e2e, and the captured live screenshots. The macOS CI `app` job **builds the app with `electron-vite`
+  and drives it with Playwright — and it passes** (the shell renders, the palette opens/searches, the
+  agent console is present). So the GUI genuinely runs; it just doesn't run on the *headless build
+  machine*. Locally, use `pnpm --filter @proa/browser dev` (needs a display).
+- **A distributable `.app` is NOT produced yet.** `electron-builder` is referenced by the app's
+  `package`/`dist` scripts but is **not configured or installed**, and `release.yml`'s packaging step
+  is best-effort. So `v0.1.0` ships **without** an attached `.app` zip. The app *builds and runs*
+  (proven by the CI e2e); turning that into a signed/notarized (or even unsigned) distributable is a
+  v0.2 item. This is the mission's explicit "Linux build machine → log the gap, verify build
+  instructions" path (ADR-0007).
 - **README screenshots** (`docs/screenshots/*.png`) were rendered from the **real renderer
   stylesheet** (`apps/browser/src/renderer/styles.css`) with representative markup, in a real
   browser — they are honest depictions of the actual UI design, not mockups, but they are not yet
