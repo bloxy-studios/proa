@@ -1,0 +1,25 @@
+{
+  "name": "@proa/core",
+  "version": "0.1.0",
+  "description": "Engine-agnostic agent runtime: EngineAdapter, DomEngine, agent loop, model providers.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup", "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@proa/protocol": "workspace:*",
+    "@proa/extractor": "workspace:*",
+    "@proa/permissions": "workspace:*",
+    "@proa/traces": "workspace:*",
+    "jsdom": "^25.0.1"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.2"
+  }
+}

@@ -15,6 +15,11 @@ export interface BuildMeta {
   url: string;
   title: string;
   now?: () => string;
+  /**
+   * Called for every emitted IR node with the DOM element it came from. Engines use
+   * this to build a ref -> element map so agents can act on stable refs, not selectors.
+   */
+  onNode?: (ref: string, el: DomLikeElement) => void;
 }
 
 const SECRET_NAME_RE = /pass(word)?|secret|token|api[-_]?key|cvv|card[-_]?number|ssn|otp/i;
@@ -70,32 +75,51 @@ export function buildPageIR(root: DomLikeElement, meta: BuildMeta): PageIR {
     return out;
   };
 
+  const flagged = (el: DomLikeElement, role: string, reasons: string[]): IRNode => {
+    anyTainted = true;
+    nodeCount++;
+    const ref = nextRef();
+    meta.onNode?.(ref, el);
+    // Surface the bait as a flagged, REDACTED node — its literal instruction text
+    // never enters the IR (and thus never enters model context) as clean content.
+    return {
+      ref,
+      role: role === "generic" ? "text" : role,
+      name: "[tainted content withheld]",
+      tainted: true,
+      taintReasons: reasons,
+    };
+  };
+
   // Returns an IRNode, "flatten" (recurse without emitting), or null (drop).
   const emit = (el: DomLikeElement): IRNode | "flatten" | null => {
     const role = roleOf(el);
     const hidden = detectHidden(el);
 
-    const text = collapse(el.textContent);
-    const injection = detectInjection(text, hidden.hidden);
-    if (injection.tainted) {
-      anyTainted = true;
-      nodeCount++;
-      // Surface the bait as a flagged, REDACTED node — its literal instruction text
-      // never enters the IR (and thus never enters model context) as clean content.
-      return {
-        ref: nextRef(),
-        role: "text",
-        name: "[tainted content withheld]",
-        tainted: true,
-        taintReasons: [...injection.reasons, ...hidden.reasons],
-        state: hidden.hidden ? { hidden: true } : undefined,
-      };
+    // Hidden subtree: inspect its FULL text for injected instructions. If it's bait,
+    // surface a flagged/redacted node; otherwise drop it entirely (token-frugal, and it
+    // never reaches model context either way). We do NOT flag on aggregate text for
+    // VISIBLE elements — that would over-flag every ancestor of any hidden bait.
+    if (hidden.hidden) {
+      const inj = detectInjection(collapse(el.textContent), true);
+      if (inj.tainted) {
+        const node = flagged(el, role, [...inj.reasons, ...hidden.reasons]);
+        node.state = { hidden: true };
+        return node;
+      }
+      return null;
     }
 
-    // Non-tainted hidden content is simply dropped (not interesting, token-frugal).
-    if (hidden.hidden) return null;
-
+    // Visible element: only its OWN direct text can taint it.
     const dt = directText(el);
+    const injection = detectInjection(dt, false);
+    if (injection.tainted) {
+      const node = flagged(el, role, injection.reasons);
+      const children = emitChildren(el);
+      if (children.length > 0) node.children = children;
+      return node;
+    }
+
     const hasText = dt.length > 0;
     if (!isInteresting(role, hasText)) {
       return "flatten";
@@ -115,7 +139,9 @@ export function buildPageIR(root: DomLikeElement, meta: BuildMeta): PageIR {
     if (selected != null) state.selected = selected === "true";
     if (secret) state.secret = true;
 
-    const node: IRNode = { ref: nextRef(), role };
+    const ref = nextRef();
+    meta.onNode?.(ref, el);
+    const node: IRNode = { ref, role };
     if (name) node.name = name;
     if (value !== undefined) node.value = value;
     const lvl = headingLevel(el);
