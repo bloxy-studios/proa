@@ -1,0 +1,6 @@
+[
+  { "name": "Alpha Keyboard", "price": 19.99, "rating": 4.2, "inStock": true },
+  { "name": "Beta Mouse", "price": 9.5, "rating": 4.6, "inStock": true },
+  { "name": "Gamma Webcam", "price": 14, "rating": 3.9, "inStock": false },
+  { "name": "Delta Monitor", "price": 29, "rating": 4.8, "inStock": true }
+]

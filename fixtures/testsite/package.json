@@ -1,0 +1,19 @@
+{
+  "name": "@proa/testsite",
+  "version": "0.1.0",
+  "description": "Bundled fixture site: login, multi-page form, product table, pagination, injection traps.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "serve": "tsx src/serve.ts"
+  },
+  "devDependencies": { "tsup": "^8.3.0", "tsx": "^4.19.1", "typescript": "^5.6.2" }
+}

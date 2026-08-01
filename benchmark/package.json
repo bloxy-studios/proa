@@ -1,0 +1,17 @@
+{
+  "name": "@proa/benchmark",
+  "version": "0.1.0",
+  "description": "Deterministic agent benchmark (MockProvider): login, cheapest, form, extract, injection trap.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "bench": "tsx src/cli.ts", "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@proa/protocol": "workspace:*",
+    "@proa/core": "workspace:*",
+    "@proa/permissions": "workspace:*",
+    "@proa/traces": "workspace:*",
+    "@proa/testsite": "workspace:*"
+  },
+  "devDependencies": { "tsx": "^4.19.1", "typescript": "^5.6.2" }
+}

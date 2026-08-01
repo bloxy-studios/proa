@@ -1,0 +1,22 @@
+{
+  "name": "@proa/mcp",
+  "version": "0.1.0",
+  "description": "Proa MCP server (stdio + streamable HTTP) and HTTP bridge. Tools mirror the SDK verbs.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup", "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@proa/protocol": "workspace:*",
+    "@proa/core": "workspace:*",
+    "@proa/permissions": "workspace:*",
+    "@proa/traces": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": { "tsup": "^8.3.0", "typescript": "^5.6.2" }
+}

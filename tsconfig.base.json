@@ -28,7 +28,8 @@
       "@proa/core": ["packages/core/src/index.ts"],
       "@proa/sdk": ["packages/sdk/src/index.ts"],
       "@proa/cli": ["packages/cli/src/index.ts"],
-      "@proa/mcp": ["packages/mcp/src/index.ts"]
+      "@proa/mcp": ["packages/mcp/src/index.ts"],
+      "@proa/testsite": ["fixtures/testsite/src/index.ts"]
     }
   }
 }

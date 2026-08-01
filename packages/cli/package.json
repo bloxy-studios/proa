@@ -1,0 +1,26 @@
+{
+  "name": "@proa/cli",
+  "version": "0.1.0",
+  "description": "The `proa` CLI: run headless tasks, inspect/replay/export traces, serve MCP, doctor.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": { "proa": "./dist/cli.js" },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup", "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@proa/protocol": "workspace:*",
+    "@proa/core": "workspace:*",
+    "@proa/permissions": "workspace:*",
+    "@proa/traces": "workspace:*",
+    "@proa/sdk": "workspace:*",
+    "@proa/mcp": "workspace:*",
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.0",
+    "tsx": "^4.19.1"
+  },
+  "devDependencies": { "tsup": "^8.3.0", "typescript": "^5.6.2" }
+}
