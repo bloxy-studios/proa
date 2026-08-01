@@ -15,7 +15,7 @@ No API key. No external network. Everything runs against the bundled fixture sit
 | 3 | [The agent benchmark](#3--the-agent-benchmark-including-the-injection-trap-2-min) | 2 min |
 | 4 | [Traces: replay, verify, export](#4--traces-replay-verify-export-2-min) | 2 min |
 | 5 | [Drive it from Claude Code](#5--drive-it-from-claude-code-mcp-2-min) | 2 min |
-| 6 | [The desktop app](#6--the-desktop-app) | read-only |
+| 6 | [The desktop app](#6--the-desktop-app) | needs a display |
 
 ---
 
@@ -391,42 +391,70 @@ The seventeen tools Proa exposes, in order — `ping`, `tabs.open`, `tabs.close`
 
 ## 6 — The desktop app
 
-> **Status.** The Electron shell lives in `apps/browser`, which is **a placeholder directory in
-> this commit** — the shipped and tested surface today is the engine-agnostic core you just
-> exercised. Electron cannot run on the headless build machine at all, so the app is built,
-> e2e-tested, screenshotted, and packaged in GitHub Actions (macOS for the artifact, ubuntu
-> under `xvfb-run` for e2e). See ADR-0007 and `docs/DECISIONS.md`. The tour below describes
-> the app's designed surface; check the CI artifacts on the latest release for a build.
+Everything above needed no GUI — that is the parity principle working. But the app is real, so
+here is the tour.
 
-What the desktop tour covers once you have a build:
+```bash
+pnpm --filter @proa/browser dev     # requires a display; macOS-first for v0.1
+```
+
+> **Where this is verified.** The app **typechecks locally**
+> (`pnpm --filter @proa/browser typecheck`), but its *runtime* does not execute on the headless
+> build machine — no display, no root, no `xvfb` (ADR-0007). The build, the
+> Playwright-on-Electron e2e, the live screenshots, and the packaged `.app` are produced in
+> **GitHub Actions** (the macOS `app` job and the release job); treat those as the source of
+> truth for the GUI. The e2e suite currently covers the shell — layout renders, ⌘T searches,
+> the agent console is present — and runs `continue-on-error` while it stabilises.
+> `ChromiumEngine` itself has no unit tests yet. See [`KNOWN_GAPS.md`](../KNOWN_GAPS.md).
 
 **Launch.** Three surfaces: browsing chrome on the left, live web content in the middle, agent
-console on the right. The page sits in a rounded, floating card over a per-Space gradient.
+console on the right. Each tab is a real Chromium `WebContentsView` inset into the rounded web
+card, over a per-Space gradient — the chrome is React, the page is not.
 
-**Spaces.** Create a second Space and watch the gradient change (five presets, the signature
-default a soft lavender→peach). Spaces are not cosmetic: each gets its own
-`session.fromPartition("persist:space-<id>")` cookie jar, and permission grants are keyed to
-`(agent, capability, domain, Space)` — a grant in `work` does nothing in `personal`.
+**Spaces.** Hit `+ Space` and watch the gradient change (five presets, the signature default a
+soft lavender→peach). Spaces are not cosmetic: each owns its own engine over
+`session.fromPartition("persist:proa-<id>")`, so cookies do not cross, and permission grants
+are keyed to `(agent, capability, domain, Space)` — a grant in `work` does nothing in
+`personal`.
 
-**Command palette (⌘T).** One field, four grammars: a URL goes there, words search, `/` runs
-commands, `@` addresses agents and tasks, and typing part of a tab title fuzzy-switches. The
-latency target is under 100 ms.
+**Command palette (⌘T or ⌘L).** One field, several grammars: a URL opens, words search
+DuckDuckGo, `/` starts a command, `@` hands the rest of the line to an agent as a task, and
+typing part of a tab title switches to it. `⌘W` closes the active tab; `Esc` dismisses the
+palette or HUD; `Esc Esc` while a run is going stops the agent.
 
-**Agent ride-along.** Give the console a task and watch the ghost cursor move over the real
-page with a colored trail, while the feed fills with `thought → action → result` rows. Expand
-any row to see the screenshot and the Page IR snapshot behind it. Agent-owned tabs render with
-a distinct animated border in the agent's accent color — you always know whose tabs are whose.
+**Agent ride-along.** Give the console a task. Main runs `runAgent()` against the Space's engine
+and streams updates back over IPC, so the feed fills with `thought → action → result` rows —
+green ✓ for allowed, ⛔ for denied — and any structured data an `extract` produced is printed
+inline. For each acted-on `ref`, main asks the tab for the element's normalized centre
+(`rectOf()`) and emits a ghost-cursor position the renderer draws over the web card.
+Agent-owned tabs get a pulsing border in the agent's accent colour, so you always know whose
+tabs are whose. (Ref-targeted actions and the ghost position use the IR↔DOM ref mapping described
+in `ARCHITECTURE.md` §4.3; the Chromium path is typechecked and mirrors the tested DomEngine hook,
+with an end-to-end Chromium agent-step test tracked as a follow-up in `KNOWN_GAPS.md`.)
 
-**Permission prompt + ledger badge.** Send the agent at `/trap`. The write-action prompt
-appears *outside* the model's control; the irreversible `Delete account` click always requires
-a fresh grant no matter what the page said. Click the ledger badge in the URL pill to see
-exactly what agents have done on this site, when, and under which grants — the same data
-`ledger` returns over MCP.
+**Permission prompt + ledger badge (⛨).** Point the agent at `/trap`. The prompt is raised by the
+`PermissionEngine` itself — main parks the promise, the toast asks you, `Grant`/`Deny` resolves
+it, and no answer inside 45 s auto-**denies**. The irreversible `Delete account` click needs a
+fresh grant every single time, no matter what the page's hidden text said. The ⛨ badge in the
+URL pill shows how many entries the audit ledger holds and ticks up when a run finishes; the
+entries themselves — agent, Space, domain, tool, capability, class, target, reason — are the
+same rows `ledger` returns over MCP, out of the same SQLite table.
 
-**Dev HUD (⌘⇧D).** Per tab: console error count, network summary, a copyable CDP endpoint, a
-Page IR viewer, **Copy page as JSON** (runs the extractor you used in §2) and **Copy as
-Playwright** (the exporter from §4). Everything the HUD does, the SDK, CLI, and MCP do too —
-that is the parity principle, and it is why this tour needed no GUI.
+**Dev HUD (⌘⇧D).** A panel per tab showing node count, title, and whether the page is tainted,
+with the Page IR as an indented tree or as raw JSON, plus **Copy page as JSON** (the IR for the
+current page) and **Copy as Playwright** (`toPlaywrightTest()`, the exporter from §4, over the
+current snapshot). Opening the palette or the HUD hides the native page views underneath so the
+overlay is visible. The bridge also exposes a per-tab network summary and a CDP endpoint string,
+but the HUD does not surface them yet — and the CDP string is a placeholder that points you at
+`@proa/mcp` rather than a real websocket URL.
+
+**Claude Code, driving the app you are looking at.** At launch the app starts the same MCP
+bridge from §5 on `127.0.0.1:8787` with a random token (`mcpBridgeInfo()` returns both), bound
+to a `ProaSession` over the active Space's engine and **the app's own PermissionEngine**. So an
+external agent's `click` raises the same on-screen toast a local one does, and its tabs are real
+visible windows. Two limits: the session binds to the Space that was active at launch, and
+MCP-opened tabs are tracked by the session rather than the sidebar, so they do not appear in the
+tab list.
 
 ---
 

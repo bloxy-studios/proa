@@ -44,7 +44,7 @@ the product stops being the product.
 
 ```
 proa/
-├── apps/browser/          desktop shell — Electron main + renderer + ChromiumEngine  (see §5.3)
+├── apps/browser/          desktop shell — Electron main + preload + React renderer  (see §4.1)
 ├── packages/
 │   ├── protocol/          shared contracts: capabilities, tools, Page IR, traces, EngineAdapter
 │   ├── extractor/         Page IR distillation + taint sanitizer + heuristic schema mapper
@@ -78,45 +78,82 @@ protocol  ←  extractor  ←  core  ←  sdk  ←  cli
 
 ### 4.1 Desktop (Electron)
 
+`apps/browser` is a real Electron app: a **main** process that owns every piece of durable
+state, a **preload** that exposes exactly one typed bridge, and a **renderer** that is pure
+chrome. The page is never part of the renderer — each tab is a native `WebContentsView`
+child inset into the web card.
+
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ Electron MAIN process                                                        │
-│                                                                              │
-│   windows & Spaces      session.fromPartition("persist:space-<id>")          │
-│   SQLite (WAL)          history · Spaces · grants · ledger · trace index     │
-│   PermissionEngine      @proa/permissions + a SQLite-backed LedgerStore      │
-│   FileTraceStore        @proa/traces — JSONL + screenshots dir               │
-│   Agent runtime         @proa/core runAgent(), one per active run            │
-│        │                                                                     │
-│        │  EngineAdapter  (ChromiumEngine)                                    │
-│        ▼                                                                     │
-│   webContents.debugger ──CDP──┐                                              │
-└───────────────────────────────┼──────────────────────────────────────────────┘
-                                │
-   ┌────────────────────────────┴─────────────┐        ┌────────────────────┐
-   │ WebContentsView (one per tab)            │        │ RENDERER (chrome)  │
-   │  · page content — untrusted              │        │  sidebar, palette, │
-   │  · NO agent code ever runs here          │        │  agent console,    │
-   │  · CDP: DOM/AX snapshot, input, network  │        │  Dev HUD           │
-   └──────────────────────────────────────────┘        │  thin view over    │
-                                                       │  main's state      │
-                                                       └────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ MAIN  (apps/browser/src/main)                                                  │
+│                                                                                │
+│  index.ts   BrowserWindow · Spaces · layout · ipcMain handlers · agent runs    │
+│  engine.ts  ChromiumEngine — implements the @proa/protocol Engine over CDP     │
+│  state.ts   AppState (better-sqlite3, WAL): LedgerStore + history + spaces     │
+│             + trace_index                                                      │
+│                                                                                │
+│  PermissionEngine  @proa/permissions   store = AppState, prompter = UI toast   │
+│  FileTraceStore    @proa/traces        <userData>/traces/<id>.jsonl            │
+│  runAgent()        @proa/core          one AbortController per run             │
+│  ProaSession       @proa/mcp           serveBridge on 127.0.0.1:8787 + token   │
+│        │                                                                       │
+│        └─ webContents.debugger ── CDP ──┐                                      │
+└─────────────────────────────────────────┼──────────────────────────────────────┘
+                                          │
+  ┌───────────────────────────────────────┴───┐   ┌───────────────────────────────┐
+  │ WebContentsView — one per tab, per Space  │   │ RENDERER — chrome only        │
+  │ session.fromPartition("persist:proa-<id>")│   │ App.tsx: sidebar · web card   │
+  │  sandbox: true, contextIsolation: true    │   │  · agent console · palette    │
+  │  page content — untrusted                 │   │  · Dev HUD · permission toast │
+  │  NO agent code ever runs here             │   │                               │
+  │  bounds = the web card's rect             │◀──│  preload → window.proa        │
+  └───────────────────────────────────────────┘   │  (ProaBridge, contextBridge)  │
+                                                  └───────────────────────────────┘
 ```
 
 Key points:
 
 - **The agent is a main-process supervisor, not an injected script.** It reaches the page
-  only through CDP commands issued via `webContents.debugger`. A compromised page can lie
-  about its content; it cannot reach into the agent's memory, its task, or its grants.
-- **Spaces are cookie-jar boundaries.** Each Space gets its own
-  `session.fromPartition("persist:space-<id>")`, so a compromised run in one Space cannot
-  read another Space's cookies (ADR-0001).
-- **The renderer is a view.** All durable state lives in main and is persisted to SQLite
-  (WAL). Panes subscribe; they do not own state. This is what makes crash-safe restore and
-  the "one keystroke = one SDK call" parity possible.
+  only through CDP commands issued via `webContents.debugger`. What runs *in* the page is
+  mechanical and decision-free: a pure DOM serializer, an `el.click()`, a `getBoundingClientRect()`.
+  A compromised page can lie about its content; it cannot reach into the agent's memory, its
+  task, or its grants.
+- **Tabs are native views, not renderer DOM.** `layout()` computes one rectangle — the window
+  minus sidebar, top bar, and (when open) the agent console — and hands it to
+  `ChromiumEngine.setBounds()`; `setActive(tabId)` toggles visibility. Because a native view
+  composites *above* the window's own web contents, opening the command palette or the Dev HUD
+  sends `overlay:set` to main, which calls `hideAll()` so the chrome overlay is actually visible.
+- **Spaces are cookie-jar boundaries.** Each Space owns its own `ChromiumEngine` over
+  `session.fromPartition("persist:proa-<id>")`, so a compromised run in one Space cannot read
+  another Space's cookies (ADR-0001). Grants are keyed to `(agent, capability, domain, space)`
+  on top of that.
+- **The renderer is a view.** All durable state lives in main and is persisted to SQLite (WAL).
+  Panes subscribe; they do not own state. This is what makes crash-safe restore and the
+  "one keystroke = one SDK call" parity possible.
+- **One typed bridge.** `src/preload/index.ts` `contextBridge`-exposes `window.proa`, whose
+  shape is the `ProaBridge` interface in `src/shared/types.ts` — spaces, tabs, history, `pageIR`,
+  `copyPageAsJSON`, `copyAsPlaywright`, `ledger`, `runAgent`/`stopAgent`, `respondPermission`,
+  `mcpBridgeInfo`. Every entry is one `ipcRenderer.invoke` to a handler in `index.ts`; the
+  renderer imports no Node and no Electron internals.
+- **Agent runs stream over IPC.** `agent:run` starts `runAgent()` against the Space's engine and
+  pushes `AgentUpdate`s on `agent:update`: `thought`, `step`, `ghost`, `permission`, `outcome`.
+  The ghost payload is the normalized (0..1) centre of the acted-on `ref`, from
+  `ChromiumTab.rectOf()`. A permission prompt is the `Prompter` itself — main parks a promise,
+  the renderer answers via `permission:respond`, and an unanswered prompt auto-**denies** after
+  45 s. When the run ends, the trace is written through `FileTraceStore` and indexed in SQLite.
+- **The MCP bridge is live inside the app.** On startup main constructs a `ProaSession` over the
+  active Space's engine and `serveBridge`s it on `127.0.0.1:8787` with a random hex token, so
+  Claude Code drives *visible* tabs under the same permission engine as the in-app agent. Two
+  honest limits: the session is bound to the Space that was active at launch (switching Spaces
+  does not rebind it), and MCP-opened tabs are tracked by the session rather than the UI tab
+  model, so they do not appear in the sidebar. If the port is taken, the bridge is silently
+  disabled and `mcpBridgeInfo()` reports `null`.
 - **SQLite is scoped to the app.** `better-sqlite3` is a native module and lives only in
   `apps/browser` (ADR-0004). The portable packages persist through injectable interfaces:
-  `LedgerStore` for grants and `FileTraceStore` (plain JSONL) for traces.
+  `LedgerStore` for grants and `FileTraceStore` (plain JSONL) for traces. `AppState`
+  (`src/main/state.ts`) *is* the `LedgerStore` implementation — `append`/`list`/`hasGrant`/
+  `grant`/`revoke`/`grants` over the `ledger` and `grants` tables — alongside `spaces`,
+  `history`, and `trace_index`.
 
 ### 4.2 Headless (Node)
 
@@ -139,17 +176,37 @@ is which `Engine` implementation is plugged in. `DomEngine` cannot render pixels
 (`screenshot()` returns `{ ref, placeholder: true }`) and has no layout, so `scroll()` is a
 successful no-op — those are the honest limits of the headless engine.
 
-### 4.3 Status of the desktop surface
+### 4.3 Status of the desktop surface — verified where
 
-The Chromium engine and the Electron shell described in §4.1 are the specified target of
-`apps/browser`, which is **a placeholder directory in this commit**. The shipped and tested
-surface today is the engine-agnostic core running on `DomEngine`: `@proa/protocol`,
-`@proa/extractor`, `@proa/permissions`, `@proa/traces`, `@proa/core`, `@proa/sdk`,
-`@proa/cli`, `@proa/mcp`, the fixture site, and the five-task benchmark. Electron cannot run
-on the headless build machine at all, so every Electron-dependent artifact — app e2e,
-screenshots, `.app` packaging — is produced and verified in GitHub Actions (ADR-0007).
-`ChromiumEngine` is bounded by the `Engine`/`EngineTab` interface in §5; anything it does
-that is not expressible there is a bug in the boundary.
+The app in §4.1 exists and is wired end to end. What differs between it and the rest of the
+repo is not *whether* it ships but *where it is verified*, because Electron cannot launch on
+the headless build machine at all (no display, no root, no `xvfb` — ADR-0007).
+
+| | Verified how |
+|---|---|
+| `apps/browser` compiles | **locally**: `pnpm --filter @proa/browser typecheck` is green (its own `tsconfig.json`, covering `src/`, `e2e/`, and the Playwright config). Note the root project excludes `apps/**`, so `pnpm verify` does *not* typecheck the app — run the filtered command |
+| app runtime, Playwright-on-Electron e2e, live screenshots, `.app` packaging | **in CI**: the macOS `app` job (build → typecheck → e2e → screenshot artifacts) and the release job. Treat those as the source of truth for the GUI |
+| everything engine-agnostic | **locally and in CI**: `pnpm verify` + the five-task benchmark on `DomEngine` + `MockProvider` |
+
+Two caveats to keep in mind when reading §4.1 (see also
+[`KNOWN_GAPS.md`](../KNOWN_GAPS.md), which tracks the second one):
+
+- The e2e suite (`apps/browser/e2e/shell.e2e.ts`) currently covers the **shell**: the
+  three-surface layout renders, ⌘T opens the palette and searches, the agent console is
+  present. It is wired with `continue-on-error` in `ci.yml` while it stabilises, so macOS is
+  additive rather than a hard gate today. The ubuntu-under-`xvfb` variant is sketched in the
+  workflow but commented out.
+- `ChromiumEngine` has **no unit coverage** — it is typechecked only, and its runtime is exercised
+  in the macOS CI e2e job rather than on the headless build machine. `snapshot()` builds the IR
+  through the `BuildMeta.onNode` hook, recording a `ref → data-proa-ref` map so that
+  `click`/`type`/`select`/`waitFor({ref})`/`rectOf()` translate the agent-facing IR ref (`n12`) to
+  the page's stamped `data-proa-ref` (`r40`) before resolving `[data-proa-ref=…]` — the same hook
+  the headless `DomEngine` uses to build its map. The remaining gap is that this translation is
+  covered by typecheck + the DomEngine's equivalent tests, not yet by a Chromium e2e that runs an
+  actual agent step; adding that e2e is a tracked follow-up (KNOWN_GAPS.md).
+
+`ChromiumEngine` is bounded by the `Engine`/`EngineTab` interface in §5; anything it does that
+is not expressible there is a bug in the boundary.
 
 ---
 
@@ -193,11 +250,20 @@ Two implementations ship:
 
 | | `ChromiumEngine` | `DomEngine` |
 |---|---|---|
-| Location | `apps/browser` (see §4.3) | `packages/core/src/engine/dom-engine.ts` |
+| Location | `apps/browser/src/main/engine.ts` | `packages/core/src/engine/dom-engine.ts` |
 | Backing | Electron `WebContentsView` + `webContents.debugger` (CDP) | jsdom |
-| Pixels | real screenshots | `{ placeholder: true }` |
+| Pixels | real screenshots (`webContents.capturePage()`) | `{ placeholder: true }` |
 | JS execution | full | jsdom's subset; forms submitted by synthesising the GET/POST URL |
+| Cookie jar | per-Space `session.fromPartition` | none (it fetches/loads HTML) |
+| Verified | typecheck + CI e2e (§4.3) | unit tests + the five-task benchmark |
 | Used by | the desktop app | `proa run --headless`, `proa mcp serve`, `sdk.launch()`, benchmark, unit tests |
+
+How `ChromiumEngine` satisfies the interface without putting agent logic in the page: a small
+pure serializer is evaluated over CDP (`Runtime.evaluate`) and returns a compact
+`{ tag, attrs, text, children }` tree plus `url`/`title`; a `DomLikeAdapter` in main wraps that
+tree in the extractor's `DomLikeElement` shape, so **the same `buildPageIR` runs behind both
+engines**. `Network.enable` events feed `networkSummary()`; `screenshot()` ignores `fullPage`
+and returns a viewport capture. See §4.3 for what is and is not verified about this path.
 
 `DomEngine` takes a `Resolver` (`(url) => string | Promise<string>`). The benchmark and the
 examples inject the fixture site's `resolve()` for hermetic, offline determinism; with no
@@ -291,7 +357,8 @@ This package is the injection defense. It is 200 lines and it never imports a mo
 - **`ledger.ts`** — `LedgerStore` is the persistence seam: `append`, `list`, `hasGrant`,
   `grant`, `revoke`, `grants`. `GrantKey = { agent, capability, domain, space }` — grants are
   scoped to all four, so a grant in the `work` Space does nothing in `personal`.
-  `MemoryLedgerStore` is the default; the desktop app supplies a SQLite implementation.
+  `MemoryLedgerStore` is the default; the desktop app supplies the SQLite implementation
+  (`AppState` in `apps/browser/src/main/state.ts`).
 - **`engine.ts`** — `PermissionEngine.check(args): Promise<PermissionDecision>` in four steps:
 
   ```
@@ -425,13 +492,16 @@ to stderr so stdout stays a clean MCP channel.
   Crucially, `click`/`type`/`select` each call `gate()` first — snapshot the IR, resolve the
   domain, run `permissions.check()` — and throw `permission-denied` when refused. **An
   external MCP client gets exactly the same guarantees as the in-app agent.** Defaults:
-  `space = "mcp"`, `agentId = "mcp-client"`, prompter `allowReversibleOnly`.
+  `space = "mcp"`, `agentId = "mcp-client"`, prompter `allowReversibleOnly`. The desktop app
+  overrides that by handing the session **its own** `PermissionEngine` (§4.1), so a write
+  requested over MCP raises the same on-screen permission toast a local agent would.
 - **`server.ts`** — `createMcpServer(session)` registers every `TOOL_DEFS` entry on an
   `McpServer` with a zod shape derived from the declared params; `serveStdio(session)` attaches
   a `StdioServerTransport`.
 - **`http.ts`** — `createBridge` / `serveBridge`: `POST /call` (and `/mcp/call`) taking
   `{ tool, params }`, optional `Bearer` token, permissive CORS, plus an unauthenticated
-  `GET /health`. This is what the SDK's `connect()` speaks.
+  `GET /health`. This is what the SDK's `connect()` speaks, and what the desktop app starts on
+  `127.0.0.1:8787` at launch so an external agent can drive visible tabs (§4.1).
 
 ### 6.9 `@proa/testsite` and `@proa/benchmark`
 
@@ -467,14 +537,14 @@ The same verb, four surfaces. If a capability exists only as pixels, it was buil
 | Verb | Desktop UI | SDK | CLI | MCP |
 |---|---|---|---|---|
 | open a tab | ⌘T / palette | `app.tabs.open(url)` | `proa open <url>` | `tabs.open` |
-| navigate | URL pill | `tab.goto(url)` | (task file) | `navigate` |
-| read the page | Page IR viewer (Dev HUD) | `tab.ir()` | (task file) | `ir` |
-| typed extract | "Copy page as JSON" | `tab.extract(zodSchema)` | `proa run task.ts --json` | `extract` |
+| navigate | URL pill → palette | `tab.goto(url)` | (task file) | `navigate` |
+| read the page | Dev HUD IR viewer | `tab.ir()` | (task file) | `ir` |
+| typed extract | Dev HUD → Copy page as JSON *(emits the Page IR; schema mapping is SDK/agent-side)* | `tab.extract(zodSchema)` | `proa run task.ts --json` | `extract` |
 | click / type / select | ride-along | agent tools | (task file) | `click` / `type` / `select` |
 | run an agent | agent console | `app.agents.run(task, opts)` | `proa run task.ts` | `agent.run` |
-| stop | global Stop | `run.stop()` | Ctrl-C | `agent.stop` |
-| audit | ledger badge | `app.ledger(domain, space)` | — | `ledger` |
-| export a run | "Copy as Playwright" | `toPlaywrightTest()` | `proa trace export --as playwright` | — |
+| stop | Stop button / Esc Esc | `run.stop()` | Ctrl-C | `agent.stop` |
+| audit | ledger badge ⛨ (count) | `app.ledger(domain, space)` | — | `ledger` |
+| export | Dev HUD → Copy as Playwright *(current page)* | `toPlaywrightTest()` | `proa trace export --as playwright` | — |
 
 ---
 
@@ -536,10 +606,13 @@ Notes on the real behaviour:
 ### Budgets
 
 `Budget { maxSteps, maxTokens?, maxCostUsd?, maxWallClockMs? }`, `DEFAULT_BUDGET = { maxSteps: 40 }`.
-The loop enforces **`maxSteps` and `maxWallClockMs`** at the top of every iteration, before
-perceiving. `maxTokens` and `maxCostUsd` are part of the contract and per-step `ModelUsage` is
-recorded into `step.thought` events, but the v0.1 loop does not yet terminate on them — treat
-them as declared-but-unenforced.
+All four are **enforced**, checked in that order at the top of every iteration before perceiving,
+so a run can never spend a step it has no budget for. `maxTokens` and `maxCostUsd` accumulate
+from each decision's `ModelUsage` (`inputTokens + outputTokens`, and `costUsd`) as it is recorded
+into the `step.thought` trace event; the next iteration compares the running total against the
+budget and finishes as `budget-exceeded` with a summary naming which one ran out. Providers that
+report no `usage` — `MockProvider`, for instance — simply never accumulate, so token and cost
+budgets are only as good as the provider's accounting.
 
 `RunStatus` is one of `completed | failed | budget-exceeded | stopped | needs-human`. Every
 terminal path goes through the same `finish()` helper, so every run — including a stopped or
@@ -607,8 +680,10 @@ iteration, permissions, and tracing. Adding a provider means implementing one me
 
 With no key configured, `sdk.launch()` and MCP's `agent.run` fall back to a `MockProvider`
 that immediately finishes with a setup message rather than throwing — the browser stays usable
-without a model. Keys come from the environment (and, in the desktop app, the macOS Keychain);
-they are never read from files in the repo.
+without a model. The desktop app does the same thing at run start: `ANTHROPIC_API_KEY` present
+→ `AnthropicProvider`, absent → a one-step `MockProvider` whose `done` summary tells you to set
+the key. Keys come from the environment on every surface — there is no Keychain integration in
+v0.1 — and are never read from files in the repo.
 
 ---
 

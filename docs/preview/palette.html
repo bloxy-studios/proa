@@ -1,0 +1,217 @@
+<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><title>Proa — palette</title><style>:root {
+  --bg: #0b1020;
+  --chrome: rgba(17, 22, 40, 0.72);
+  --chrome-solid: #111628;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #e7e9f3;
+  --muted: #8b90a6;
+  --accent: #a78bfa;
+  --accent-2: #f0abfc;
+  --agent: #34d399;
+  --danger: #fb7185;
+  --radius: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+[data-theme="light"] {
+  --bg: #eef1f8;
+  --chrome: rgba(255, 255, 255, 0.72);
+  --chrome-solid: #ffffff;
+  --border: rgba(0, 0, 0, 0.08);
+  --text: #1a1d29;
+  --muted: #5c6178;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); overflow: hidden; user-select: none; }
+button { font: inherit; color: inherit; cursor: pointer; border: none; background: none; }
+
+.shell { display: grid; grid-template-columns: 280px 1fr; height: 100vh; }
+.shell.console-open { grid-template-columns: 280px 1fr 380px; }
+
+/* ---- Sidebar ---- */
+.sidebar {
+  background: var(--chrome); backdrop-filter: blur(24px);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column;
+  padding: 14px 12px; gap: 14px; -webkit-app-region: drag;
+}
+.sidebar * { -webkit-app-region: no-drag; }
+.space-switcher { display: flex; align-items: center; gap: 8px; padding: 6px 6px 2px; margin-top: 26px; }
+.space-dot { width: 12px; height: 12px; border-radius: 4px; }
+.space-name { font-weight: 650; font-size: 15px; letter-spacing: -0.01em; }
+.space-list { display: flex; gap: 6px; flex-wrap: wrap; }
+.space-chip { padding: 3px 9px; border-radius: 999px; font-size: 11px; color: var(--muted);
+  border: 1px solid var(--border); }
+.space-chip.active { color: var(--text); border-color: var(--accent); }
+
+.url-pill {
+  display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 12.5px;
+  color: var(--muted); cursor: text;
+}
+.url-pill .ledger { margin-left: auto; font-size: 10px; padding: 1px 6px; border-radius: 6px;
+  background: rgba(167,139,250,0.16); color: var(--accent); }
+
+.pinned { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.pinned .fav { aspect-ratio: 1; border-radius: 10px; background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border); display: grid; place-items: center; font-size: 16px; }
+
+.section-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); padding: 2px 6px; }
+.tablist { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; flex: 1; }
+.tab { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 9px;
+  font-size: 13px; color: var(--muted); position: relative; }
+.tab:hover { background: rgba(255,255,255,0.04); }
+.tab.active { background: rgba(255,255,255,0.08); color: var(--text); }
+.tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.tab.agent { color: var(--text); }
+.tab.agent::before { content: ""; position: absolute; inset: 0; border-radius: 9px;
+  border: 1px solid var(--agent); opacity: 0.7; animation: pulse 2s infinite; pointer-events: none; }
+@keyframes pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 0.8; } }
+.tab .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab .close { margin-left: auto; opacity: 0; font-size: 12px; }
+.tab:hover .close { opacity: 0.6; }
+
+.utility { display: flex; align-items: center; gap: 10px; padding: 8px 6px 2px;
+  border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.utility .grow { flex: 1; }
+
+/* ---- Web area ---- */
+.web { position: relative; overflow: hidden; }
+.wallpaper { position: absolute; inset: 0; }
+.topbar { position: relative; height: 52px; display: flex; align-items: center; gap: 10px;
+  padding: 0 16px; -webkit-app-region: drag; z-index: 2; }
+.topbar * { -webkit-app-region: no-drag; }
+.navbtn { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  color: rgba(0,0,0,0.5); background: rgba(255,255,255,0.35); }
+[data-theme="dark"] .navbtn { color: rgba(255,255,255,0.7); background: rgba(0,0,0,0.2); }
+.web-card { position: absolute; left: 14px; right: 14px; top: 52px; bottom: 14px;
+  border-radius: var(--radius); background: rgba(255,255,255,0.5);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.25);
+  display: grid; place-items: center; color: rgba(0,0,0,0.4); font-size: 13px; overflow: hidden; }
+[data-theme="dark"] .web-card { background: rgba(10,12,24,0.35); color: rgba(255,255,255,0.4); }
+
+/* Ghost cursor */
+.ghost { position: absolute; width: 22px; height: 22px; z-index: 5; pointer-events: none;
+  transition: left 0.5s cubic-bezier(.2,.8,.2,1), top 0.5s cubic-bezier(.2,.8,.2,1); }
+.ghost .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--agent);
+  box-shadow: 0 0 0 6px rgba(52,211,153,0.25); }
+.ghost .lbl { position: absolute; left: 20px; top: -2px; font-size: 10px; color: #062; background: var(--agent);
+  padding: 1px 6px; border-radius: 6px; white-space: nowrap; }
+
+/* ---- Agent console ---- */
+.console { background: var(--chrome); backdrop-filter: blur(24px); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; }
+.console h3 { font-size: 13px; padding: 16px 16px 8px; letter-spacing: -0.01em; }
+.feed { flex: 1; overflow-y: auto; padding: 6px 12px; display: flex; flex-direction: column; gap: 8px; }
+.step { border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; background: rgba(255,255,255,0.03); }
+.step .thought { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+.step .action { font-size: 12px; font-family: ui-monospace, monospace; color: var(--accent); }
+.step .result { font-size: 11.5px; margin-top: 4px; }
+.step .result.ok { color: var(--agent); }
+.step .result.blocked { color: var(--danger); }
+.composer { border-top: 1px solid var(--border); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.composer textarea { width: 100%; resize: none; height: 58px; border-radius: 10px; padding: 9px;
+  background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 13px; }
+.composer .row { display: flex; gap: 8px; align-items: center; }
+.btn { padding: 7px 14px; border-radius: 9px; background: var(--accent); color: #1a103a; font-weight: 600; font-size: 13px; }
+.btn.ghostbtn { background: rgba(255,255,255,0.06); color: var(--text); }
+.btn.stop { background: var(--danger); color: #3a0410; }
+.artifact { border: 1px dashed var(--border); border-radius: 10px; padding: 8px 10px; font-size: 11.5px; color: var(--muted); }
+.artifact pre { max-height: 120px; overflow: auto; font-family: ui-monospace, monospace; font-size: 11px; color: var(--text); }
+
+/* ---- Command palette ---- */
+.overlay { position: fixed; inset: 0; background: rgba(4,6,14,0.55); backdrop-filter: blur(6px);
+  z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding-top: 14vh; }
+.palette { width: min(680px, 92vw); background: var(--chrome-solid); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: 0 30px 80px rgba(0,0,0,0.5); overflow: hidden; }
+.palette input { width: 100%; padding: 18px 20px; font-size: 17px; background: transparent; border: none;
+  color: var(--text); outline: none; }
+.palette .hint { font-size: 11px; color: var(--muted); padding: 0 20px 8px; }
+.palette .results { max-height: 46vh; overflow-y: auto; border-top: 1px solid var(--border); }
+.palette .res { padding: 11px 20px; font-size: 13.5px; display: flex; gap: 10px; align-items: center; }
+.palette .res.sel { background: rgba(167,139,250,0.14); }
+.palette .res .kind { font-size: 10px; color: var(--muted); margin-left: auto; }
+
+/* ---- Dev HUD ---- */
+.hud { position: fixed; right: 18px; bottom: 18px; width: 420px; max-height: 70vh; z-index: 40;
+  background: var(--chrome-solid); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.5); display: flex; flex-direction: column; overflow: hidden; }
+.hud .hud-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.hud .hud-stats { display: flex; gap: 14px; padding: 10px 14px; font-size: 12px; color: var(--muted); }
+.hud .hud-stats b { color: var(--text); }
+.hud .hud-actions { display: flex; gap: 8px; padding: 0 14px 10px; flex-wrap: wrap; }
+.hud pre { flex: 1; overflow: auto; margin: 0 14px 14px; padding: 10px; border-radius: 10px;
+  background: rgba(0,0,0,0.35); font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.5; }
+.tag { padding: 1px 7px; border-radius: 6px; font-size: 10px; }
+.tag.tainted { background: rgba(251,113,133,0.18); color: var(--danger); }
+
+/* permission toast */
+.perm { position: fixed; top: 64px; right: 18px; width: 360px; z-index: 60; background: var(--chrome-solid);
+  border: 1px solid var(--danger); border-radius: 14px; padding: 14px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+.perm h4 { font-size: 13px; margin-bottom: 6px; }
+.perm p { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.perm .row { display: flex; gap: 8px; }
+.empty { color: var(--muted); font-size: 12.5px; padding: 20px; text-align: center; }
+
+  html,body{width:1360px;height:900px}</style></head><body><div class="shell console-open">
+  <aside class="sidebar">
+    <div class="space-switcher"><span class="space-dot" style="background:var(--accent)"></span><span class="space-name">Research</span></div>
+    <div class="space-list">
+      <button class="space-chip active">Research</button>
+      <button class="space-chip">Personal</button>
+      <button class="space-chip">Shopping</button>
+      <button class="space-chip">+ Space</button>
+    </div>
+    <div class="url-pill"><span>🔍</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">news.ycombinator.com</span><span class="ledger" title="Agent actions recorded here">⛨ 7</span></div>
+    <div class="pinned"><div class="fav">◆</div><div class="fav">✦</div><div class="fav">❖</div><div class="fav">✷</div></div>
+    <div class="section-label">Tabs</div>
+    <div class="tablist">
+      <div class="tab active"><span class="dot"></span><span class="title">Hacker News</span></div>
+      <div class="tab agent"><span class="dot" style="background:var(--agent)"></span><span class="title">Agent · comparison shop</span></div>
+      <div class="tab"><span class="dot"></span><span class="title">GitHub · proa</span></div>
+      <div class="tab"><span class="dot"></span><span class="title">Docs — Page IR</span></div>
+    </div>
+    <button class="tab">＋ New tab</button>
+    <div class="utility"><button title="theme">◐</button><button title="console">◨</button><span class="grow"></span><span>● local</span></div>
+  </aside>
+  <section class="web">
+    <div class="wallpaper" style="background:linear-gradient(135deg,#e9d5ff 0%,#fde2c8 100%)"></div>
+    <div class="topbar"><button class="navbtn">‹</button><button class="navbtn">›</button><button class="navbtn">⌘T</button><span style="flex:1"></span><button class="navbtn">&lt;/&gt;</button></div>
+    <div class="web-card" style="color:#1a1d29;background:#fff;place-items:stretch">
+      <div style="padding:26px 30px;font-family:Georgia,serif">
+        <div style="font-size:13px;color:#9333ea;letter-spacing:.08em;text-transform:uppercase">Hacker News · Top</div>
+        <h1 style="font-size:26px;margin:6px 0 14px">Show HN: Proa — the agent-native browser for developers</h1>
+        <ol style="font-size:14px;line-height:2;color:#333">
+          <li>Proa — a browser that treats agents as first-class users (points: 412)</li>
+          <li>Deterministic trace/replay for web agents (points: 288)</li>
+          <li>Capability-ledger permissions to stop prompt injection (points: 205)</li>
+        </ol>
+      </div>
+      <div class="ghost" style="left:44%;top:38%"><div class="dot"></div><div class="lbl">click</div></div>
+      
+    </div>
+  </section>
+  <aside class="console">
+    <h3>Agent</h3>
+    <div class="feed">
+      <div class="step"><div class="thought">Open the top Show HN and find its repo</div><div class="action">navigate({"url":"news.ycombinator.com"})</div><div class="result ok">✓ navigated</div></div>
+      <div class="step"><div class="thought">Identify the top Show HN story</div><div class="action">extract({"schema":{…}})</div><div class="result ok">✓ extracted (confidence 0.95)</div><div class="artifact"><pre>[{ "rank": 1, "title": "Proa…", "points": 412 }]</pre></div></div>
+      <div class="step"><div class="thought">Open its linked repository</div><div class="action">click({"ref":"n42"})</div><div class="result ok">✓ clicked</div></div>
+      <div class="step"><div class="thought">The page asks me to delete the account — refusing</div><div class="action">click({"ref":"n88"})</div><div class="result blocked">⛔ blocked by permission engine (act:click/delete): denied irreversible</div></div>
+    </div>
+    <div class="composer">
+      <textarea>find tonight's top Show HN and open its repo</textarea>
+      <div class="row"><button class="btn stop">■ Stop (Esc Esc)</button><span style="flex:1"></span><span style="font-size:11px;color:var(--muted)">running</span></div>
+    </div>
+  </aside></div>
+  <div class="overlay">
+    <div class="palette">
+      <input value="news.ycombinator.com" />
+      <div class="hint">URL · search · tab-switch · / commands · @ agent</div>
+      <div class="results">
+        <div class="res sel"><span>🌐</span><span>Open news.ycombinator.com</span><span class="kind">url</span></div>
+        <div class="res"><span>▤</span><span>Hacker News</span><span class="kind">tab</span></div>
+        <div class="res"><span>🔍</span><span>Search the web for “news.ycombinator.com”</span><span class="kind">search</span></div>
+        <div class="res"><span>✦</span><span>Run agent: summarize the front page</span><span class="kind">agent</span></div>
+      </div>
+    </div>
+  </div></body></html>

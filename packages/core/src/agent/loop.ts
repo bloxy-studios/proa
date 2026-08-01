@@ -60,6 +60,8 @@ export async function runAgent(args: RunAgentArgs): Promise<RunOutcome> {
   let summary = "";
   let question: string | undefined;
   let steps = 0;
+  let tokensUsed = 0;
+  let costUsed = 0;
 
   const finish = (s: RunStatus, sum: string): RunOutcome => {
     status = s;
@@ -84,6 +86,12 @@ export async function runAgent(args: RunAgentArgs): Promise<RunOutcome> {
     if (budget.maxWallClockMs && Date.now() - startMs > budget.maxWallClockMs) {
       return finish("budget-exceeded", "wall-clock budget exceeded");
     }
+    if (budget.maxTokens && tokensUsed >= budget.maxTokens) {
+      return finish("budget-exceeded", `token budget (${budget.maxTokens}) exhausted`);
+    }
+    if (budget.maxCostUsd && costUsed >= budget.maxCostUsd) {
+      return finish("budget-exceeded", `cost budget ($${budget.maxCostUsd}) exhausted`);
+    }
 
     const ir = await current.snapshot();
     args.trace.append("ir.snapshot", ir);
@@ -97,6 +105,10 @@ export async function runAgent(args: RunAgentArgs): Promise<RunOutcome> {
     });
     args.trace.append("step.thought", { thought: decision.thought, usage: decision.usage });
     args.onThought?.(decision.thought);
+    if (decision.usage) {
+      tokensUsed += (decision.usage.inputTokens ?? 0) + (decision.usage.outputTokens ?? 0);
+      costUsed += decision.usage.costUsd ?? 0;
+    }
 
     const action = decision.action;
     if (action.tool === DONE_TOOL) {

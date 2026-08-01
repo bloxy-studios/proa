@@ -11,6 +11,8 @@ export default tseslint.config(
       "**/*.d.ts",
       "apps/browser/out/**",
       "coverage/**",
+      "scripts/**",
+      "docs/preview/**",
     ],
   },
   js.configs.recommended,

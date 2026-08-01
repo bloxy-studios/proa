@@ -19,8 +19,10 @@ you want to change one of those decisions, add a new ADR rather than editing the
 | **Git** | any recent version |
 | **macOS** | only needed for the desktop app and `.app` packaging (see §8) |
 
-Everything except the Electron app builds, tests, and runs on any platform with Node ≥ 20 —
-no display, no GPU, no API key, no network. That is deliberate (ADR-0001, ADR-0006).
+Everything except the Electron app's *runtime* builds, tests, and runs on any platform with
+Node ≥ 20 — no display, no GPU, no API key, no network. That is deliberate (ADR-0001,
+ADR-0006). The app itself typechecks anywhere; running, e2e-testing, and packaging it need a
+display (§8).
 
 ```bash
 git clone https://github.com/bloxy-studios/proa
@@ -35,7 +37,7 @@ pnpm verify
 
 | Command | What it does |
 |---|---|
-| `pnpm verify` | **lint + typecheck + test + build.** The gate. Must be green before every push. |
+| `pnpm verify` | **lint + typecheck + test + build.** The gate. Must be green before every push. Covers `packages/*`, `benchmark`, and `fixtures/*` — **not** `apps/browser` (§8). |
 | `pnpm lint` | `eslint .` |
 | `pnpm typecheck` | `tsc -p tsconfig.json --noEmit` across all packages at once |
 | `pnpm test` | `vitest run` — unit tests plus the full agent benchmark |
@@ -91,7 +93,7 @@ than string literals.
 ## 3. Monorepo layout
 
 ```
-apps/browser        desktop shell — Electron main + renderer + ChromiumEngine
+apps/browser        desktop shell — Electron main (ChromiumEngine, SQLite) + preload + renderer
 packages/protocol   shared contracts — capabilities, tools, Page IR, traces, EngineAdapter
 packages/extractor  Page IR distillation + taint sanitizer + schema mapper
 packages/permissions capability engine + audit ledger
@@ -198,8 +200,10 @@ touches five files, in this order:
    permission engine can only escalate from there.*
 2. **`packages/protocol/src/engine.ts`** — if the tool needs to touch the page, add a method to
    `EngineTab`, then implement it in **every** engine: `DomEngine`
-   (`packages/core/src/engine/dom-engine.ts`) and `ChromiumEngine` (`apps/browser`). A
-   half-implemented adapter is a broken build, which is the intent.
+   (`packages/core/src/engine/dom-engine.ts`) and `ChromiumEngine`
+   (`apps/browser/src/main/engine.ts`). A half-implemented adapter is a broken build, which is
+   the intent. Remember that `pnpm verify` does not typecheck the app — run
+   `pnpm --filter @proa/browser typecheck` too.
 3. **`packages/core/src/agent/loop.ts`** — add a `case` to `dispatch()` returning an
    `ActionResult`. Push an `Artifact` if the tool produces one. Do **not** add a permission
    check here; the gate above `dispatch()` already covers every tool via `classifyAction`.
@@ -210,6 +214,11 @@ touches five files, in this order:
    exactly like `click`/`type`/`select`.
 5. **`packages/cli/src/program.ts` and/or `packages/sdk/src/app.ts`** — surface it where it
    makes sense for a human at a terminal or a script.
+6. **`apps/browser`** — only if the verb needs a human-facing control. That is four small edits
+   in lockstep: the method on `ProaBridge` (`src/shared/types.ts`), the `ipcRenderer.invoke` in
+   `src/preload/index.ts`, the `ipcMain.handle` in `src/main/index.ts`, and the UI that calls it
+   in `src/renderer/App.tsx`. Agent-only tools need none of this — they reach the page through
+   the engine, and the console already renders any step.
 
 Then: a benchmark task or a loop test that exercises it, and a line in the parity matrix in
 `docs/ARCHITECTURE.md`.
@@ -257,22 +266,42 @@ process in [SECURITY.md](./SECURITY.md) §5.
 CI runs on GitHub Actions and **never requires an API key or external network** — everything
 runs against the bundled fixture site on `MockProvider` (ADR-0006).
 
-- **ubuntu** — lint, typecheck, unit tests, build, and the agent benchmark. Electron e2e on
-  Linux runs under `xvfb-run`, because CI has no display.
-- **macOS** — build, Playwright-on-Electron e2e, the benchmark, and (on release tags) the
-  unsigned `.app` zip artifact.
+- **ubuntu** — three required jobs: `verify` (lint · typecheck · test · build), `benchmark`
+  (the five agent tasks), and `trace-export-e2e` (record a trace, export it, assert the
+  generated spec is real Playwright code). These are the hard gate.
+- **macOS** — the `app` job: install, build the packages, typecheck `@proa/browser`, build the
+  Electron app, run the Playwright-on-Electron e2e, and upload the screenshots it captures. On
+  release tags, the release job also produces the unsigned `.app` zip.
 
-If you are working on the Electron shell, two things to know. First, `apps/browser` is
-currently **a placeholder directory** — `pnpm build:app` has nothing to build yet, and the
-shipped surface is the engine-agnostic core. Second, ADR-0007: v0.1 was built on a headless
-sandbox with no display and no ability to install `xvfb`, so **all Electron-dependent
-verification — app e2e, screenshots, and packaging — is produced and verified in CI, not on the
-build machine.**
+### The Electron shell
 
-The desktop app is macOS-first; if you have a Mac, `pnpm build:app` and the e2e harness will be
-the fastest feedback loop once the shell lands, and please attach screenshots to PRs that change
-the UI. If you do not have a Mac, the engine-agnostic packages are fully testable locally and are
-where most of the differentiating logic lives. Whatever `ChromiumEngine` does must be expressible
-through the `Engine` / `EngineTab` interface — if it is not, the boundary is the bug.
+`apps/browser` **exists**: Electron main (`ChromiumEngine`, SQLite `AppState`, IPC, the MCP
+bridge), a `contextBridge` preload, and a React renderer. See
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) §4.1 for the process model.
+
+What you can do where:
+
+| Command | Where it works |
+|---|---|
+| `pnpm --filter @proa/browser typecheck` | **anywhere**, including headless Linux. Note the root project excludes `apps/**`, so `pnpm verify` does *not* cover the app — run this yourself before pushing shell changes |
+| `pnpm --filter @proa/browser dev` | needs a **display** (macOS-first for v0.1) |
+| `pnpm build:app` / `pnpm --filter @proa/browser build` | needs the Electron toolchain; runs in the macOS CI job |
+| `pnpm --filter @proa/browser test:e2e` | needs a display; runs in the macOS CI job |
+| `pnpm --filter @proa/browser package` | macOS only (unsigned `.app`) |
+
+ADR-0007: v0.1 was built on a headless sandbox with no display and no ability to install
+`xvfb`, so **all Electron-dependent verification — app runtime, e2e, screenshots, and packaging
+— is produced and verified in CI, not on the build machine.** Two consequences worth knowing
+before you file a bug: the e2e suite currently covers the shell only (layout, ⌘T palette, agent
+console) and is wired `continue-on-error` in `ci.yml` while it stabilises, and `ChromiumEngine`
+has no unit tests yet — it is typechecked. The latter is tracked in
+[`KNOWN_GAPS.md`](./KNOWN_GAPS.md), which is the place to look before assuming something is
+broken rather than unfinished.
+
+If you have a Mac, `dev` plus the e2e harness is the fastest feedback loop, and please attach
+screenshots to PRs that change the UI. If you do not, the engine-agnostic packages are fully
+testable locally and are where most of the differentiating logic lives; a `ChromiumEngine` change
+you cannot run is still reviewable, because whatever it does must be expressible through the
+`Engine` / `EngineTab` interface — if it is not, the boundary is the bug.
 
 Thanks for contributing.

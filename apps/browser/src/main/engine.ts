@@ -143,10 +143,17 @@ export class ChromiumEngine implements Engine {
 class ChromiumTab implements EngineTab {
   private net: NetworkSummary = { requests: 0, failed: 0, bytes: 0, domains: [] };
   private shots = 0;
+  /** Maps an IR ref (e.g. "n12") -> the page's stamped data-proa-ref (e.g. "r40"). */
+  private refMap = new Map<string, string>();
   constructor(
     readonly id: string,
     readonly view: WebContentsView,
   ) {}
+
+  /** Translate an IR ref to the DOM stamp the serializer wrote; fall back to the ref itself. */
+  private stamp(ref: string): string {
+    return this.refMap.get(ref) ?? ref;
+  }
 
   private get wc() {
     return this.view.webContents;
@@ -190,7 +197,17 @@ class ChromiumTab implements EngineTab {
     const raw = await this.evaluate<string>(SERIALIZER);
     const parsed = JSON.parse(raw) as { tree: SnapNode; url: string; title: string };
     const root = new DomLikeAdapter(parsed.tree);
-    return buildPageIR(root as unknown as DomLikeElement, { url: parsed.url, title: parsed.title });
+    this.refMap = new Map();
+    return buildPageIR(root as unknown as DomLikeElement, {
+      url: parsed.url,
+      title: parsed.title,
+      // Associate each IR ref with the DOM element's data-proa-ref stamp so ref-targeted
+      // actions (click/type/select/waitFor/rectOf) resolve to the right node.
+      onNode: (ref, el) => {
+        const s = el.getAttribute("data-proa-ref");
+        if (s) this.refMap.set(ref, s);
+      },
+    });
   }
 
   async navigate(url: string): Promise<void> {
@@ -205,7 +222,7 @@ class ChromiumTab implements EngineTab {
 
   private async actOnRef(ref: string, op: string): Promise<void> {
     await this.evaluate(
-      `(() => { const el = document.querySelector('[data-proa-ref=${JSON.stringify(ref)}]'); if (!el) return false; ${op}; return true; })()`,
+      `(() => { const el = document.querySelector('[data-proa-ref=${JSON.stringify(this.stamp(ref))}]'); if (!el) return false; ${op}; return true; })()`,
     );
   }
 
@@ -243,7 +260,7 @@ class ChromiumTab implements EngineTab {
           opts.text
             ? `return document.body.innerText.includes(${JSON.stringify(opts.text)})`
             : opts.ref
-              ? `return !!document.querySelector('[data-proa-ref=${JSON.stringify(opts.ref)}]')`
+              ? `return !!document.querySelector('[data-proa-ref=${JSON.stringify(this.stamp(opts.ref))}]')`
               : "return true"
         }; })()`,
       );
@@ -259,7 +276,7 @@ class ChromiumTab implements EngineTab {
   /** Normalized (0..1) center of a ref's bounding rect, for the ghost cursor. */
   async rectOf(ref: string): Promise<{ x: number; y: number } | null> {
     return this.evaluate<{ x: number; y: number } | null>(
-      `(() => { const el = document.querySelector('[data-proa-ref=${JSON.stringify(ref)}]'); if (!el) return null;
+      `(() => { const el = document.querySelector('[data-proa-ref=${JSON.stringify(this.stamp(ref))}]'); if (!el) return null;
         const r = el.getBoundingClientRect(); const w = innerWidth||1, h = innerHeight||1;
         return { x: (r.left + r.width/2)/w, y: (r.top + r.height/2)/h }; })()`,
     );

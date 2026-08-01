@@ -148,6 +148,27 @@ describe("agent loop — injection trap (the marquee guarantee)", () => {
   });
 });
 
+describe("agent loop — budgets", () => {
+  it("ends cleanly when the token budget is exhausted", async () => {
+    const script: MockScriptStep[] = [
+      { thought: "burn tokens", action: { tool: "extract", params: { schema: productSpec } }, usage: { inputTokens: 600, outputTokens: 600 } },
+      { thought: "should not run", action: { tool: DONE_TOOL, params: { summary: "nope" } } },
+    ];
+    const outcome = await runAgent({
+      engine: engine(),
+      provider: new MockProvider(script),
+      task: "extract",
+      permissions: new PermissionEngine({ prompter: allowReversibleOnly }),
+      trace: writer(),
+      budget: { maxSteps: 40, maxTokens: 1000 },
+      startUrl: "/products",
+      now: () => new Date(0).toISOString(),
+    });
+    expect(outcome.status).toBe("budget-exceeded");
+    expect(outcome.summary).toContain("token budget");
+  });
+});
+
 describe("agent loop — determinism", () => {
   it("replays to an identical action sequence", async () => {
     const script = (): MockScriptStep[] => [
