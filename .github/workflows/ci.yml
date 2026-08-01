@@ -1,0 +1,447 @@
+# Proa — Continuous Integration
+#
+# CI needs NO API KEY and NO third-party network. Every agent run in this
+# workflow drives the bundled fixture site (@proa/testsite, served in-process by
+# the DomEngine resolver) through MockProvider, so lint/test/benchmark/trace
+# export are fully deterministic and offline. The only network access required
+# is the npm registry for `pnpm install --frozen-lockfile`.
+#
+# Job matrix
+#   detect            ubuntu  Probes the workspace for the optional Electron app
+#                             (apps/browser) and the scripts it exposes. Cheap, ~15s.
+#   verify            ubuntu  lint -> typecheck -> test -> build (same as `pnpm run verify`).
+#                             THE hard gate for every PR. No secrets, no display.
+#   benchmark         ubuntu  The 5-task agent benchmark on MockProvider (login,
+#                             cheapest-to-cart, multi-page-form, extract-table,
+#                             injection-trap) plus the headless `proa run` example.
+#                             Hard gate: a regression in agent behaviour fails CI.
+#   trace-export-e2e  ubuntu  Records benchmark traces, exports the login trace via
+#                             `proa trace export --as playwright`, and asserts the
+#                             generated spec is real Playwright code. Hard gate.
+#   app               macos   Electron build + Playwright-on-Electron e2e. Runs only
+#                             once apps/browser/package.json exists (gated on `detect`);
+#                             until then it is skipped and can never redden CI.
+#
+# The three ubuntu jobs run in parallel and are all required. The macOS job is
+# additive: it is skipped entirely while apps/browser is still empty.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per ref; superseded runs are cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # detect — is the Electron app in the tree yet, and what scripts does it have?
+  #
+  # NOTE: `hashFiles()` cannot be used in a job-level `if:` — job conditions are
+  # evaluated before any checkout runs, so the workspace is empty and hashFiles()
+  # always returns "". This tiny ubuntu job does the probe after a checkout and
+  # publishes the answer as job outputs. Step-level `hashFiles()` guards (used in
+  # trace-export-e2e below) do work, because steps run after checkout.
+  # ---------------------------------------------------------------------------
+  detect:
+    name: Detect optional workspaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      app: ${{ steps.probe.outputs.app }}
+      app_name: ${{ steps.probe.outputs.app_name }}
+      app_build: ${{ steps.probe.outputs.app_build }}
+      app_e2e: ${{ steps.probe.outputs.app_e2e }}
+      app_typecheck: ${{ steps.probe.outputs.app_typecheck }}
+      app_playwright: ${{ steps.probe.outputs.app_playwright }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe apps/browser
+        id: probe
+        run: |
+          set -euo pipefail
+          cat > /tmp/probe-app.mjs <<'PROBE'
+          import { appendFileSync, existsSync, readFileSync } from "node:fs";
+
+          const out = process.env.GITHUB_OUTPUT ?? "/dev/stdout";
+          const set = (key, value) => appendFileSync(out, key + "=" + value + "\n");
+          const manifest = "apps/browser/package.json";
+
+          if (!existsSync(manifest)) {
+            for (const key of ["app", "app_build", "app_playwright"]) set(key, "false");
+            set("app_name", "@proa/browser");
+            set("app_e2e", "");
+            set("app_typecheck", "");
+            console.log("apps/browser/package.json not found — Electron jobs will be skipped.");
+            process.exit(0);
+          }
+
+          const pkg = JSON.parse(readFileSync(manifest, "utf8"));
+          const scripts = pkg.scripts ?? {};
+          const pick = (...names) => names.find((n) => typeof scripts[n] === "string") ?? "";
+          const configs = ["playwright.config.ts", "playwright.config.js", "playwright.config.mts"];
+
+          const name = typeof pkg.name === "string" && pkg.name ? pkg.name : "@proa/browser";
+          const build = pick("build");
+          const e2e = pick("test:e2e", "e2e", "test:electron");
+          const typecheck = pick("typecheck");
+          const playwright = configs.some((f) => existsSync("apps/browser/" + f));
+
+          set("app", "true");
+          set("app_name", name);
+          set("app_build", build ? "true" : "false");
+          set("app_e2e", e2e);
+          set("app_typecheck", typecheck);
+          set("app_playwright", playwright ? "true" : "false");
+
+          console.log("detected " + name + ": build=" + (build || "-") + " e2e=" + (e2e || "-") +
+            " typecheck=" + (typecheck || "-") + " playwright.config=" + playwright);
+          PROBE
+          node /tmp/probe-app.mjs
+
+  # ---------------------------------------------------------------------------
+  # verify — the hard gate. Mirrors `pnpm run verify` as discrete steps so a
+  # failure names the phase (lint vs typecheck vs test vs build) in the UI.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Verify (lint · typecheck · test · build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm must be installed before setup-node so `cache: pnpm` can locate the store.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.3 # keep in sync with root package.json "packageManager"
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20" # root engines: node >= 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Build packages
+        run: pnpm run build
+
+  # ---------------------------------------------------------------------------
+  # benchmark — deterministic agent quality gate (MockProvider, no API key).
+  # ---------------------------------------------------------------------------
+  benchmark:
+    name: Agent benchmark + example (MockProvider)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.3
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Workspace packages resolve to their dist/ entrypoints at runtime
+      # (main/exports -> ./dist/index.js), so build before running anything.
+      - name: Build packages
+        run: pnpm run build
+
+      - name: Benchmark — 5 tasks on MockProvider
+        run: pnpm --filter @proa/benchmark bench
+
+      - name: Example — `proa run examples/extract-products.ts --json`
+        run: |
+          set -euo pipefail
+          node packages/cli/dist/cli.js run examples/extract-products.ts --json | tee /tmp/example-output.json
+
+      - name: Assert the example emitted non-empty JSON
+        run: |
+          set -euo pipefail
+          cat > /tmp/assert-json.mjs <<'ASSERT'
+          import { readFileSync } from "node:fs";
+
+          const raw = readFileSync("/tmp/example-output.json", "utf8").trim();
+          if (!raw) {
+            console.error("::error::the example produced no output at all");
+            process.exit(1);
+          }
+
+          const start = raw.search(/[[{]/);
+          if (start < 0) {
+            console.error("::error::the example output contains no JSON:\n" + raw);
+            process.exit(1);
+          }
+
+          let data;
+          try {
+            data = JSON.parse(raw.slice(start));
+          } catch (err) {
+            console.error("::error::the example output is not valid JSON: " + err.message);
+            console.error(raw);
+            process.exit(1);
+          }
+
+          const count = Array.isArray(data) ? data.length : Object.keys(data ?? {}).length;
+          if (count === 0) {
+            console.error("::error::the example returned empty JSON (expected extracted products)");
+            process.exit(1);
+          }
+
+          console.log("example emitted valid JSON with " + count + " record(s)");
+          ASSERT
+          node /tmp/assert-json.mjs
+
+  # ---------------------------------------------------------------------------
+  # trace-export-e2e — record → export → assert. Proves the "every run is a
+  # replayable test" promise without needing a browser or a model key.
+  # ---------------------------------------------------------------------------
+  trace-export-e2e:
+    name: Trace export (Playwright codegen)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.3
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm run build
+
+      - name: Record benchmark traces
+        env:
+          PROA_BENCH_TRACE_DIR: ${{ github.workspace }}/.proa/traces
+        run: |
+          set -euo pipefail
+          pnpm --filter @proa/benchmark bench
+          ls -la .proa/traces
+
+      - name: Resolve the login trace id
+        id: login-trace
+        run: |
+          set -euo pipefail
+          cat > /tmp/find-login-trace.mjs <<'FIND'
+          import { appendFileSync, readdirSync, readFileSync } from "node:fs";
+          import { basename, join } from "node:path";
+
+          const dir = ".proa/traces";
+          const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl")).sort();
+          if (files.length === 0) {
+            console.error("::error::no traces were written to " + dir);
+            process.exit(1);
+          }
+
+          let found = "";
+          for (const file of files) {
+            const first = readFileSync(join(dir, file), "utf8").split("\n")[0] ?? "";
+            let meta;
+            try {
+              meta = JSON.parse(first);
+            } catch {
+              continue;
+            }
+            const task = typeof meta.task === "string" ? meta.task : "";
+            if (/sign in|log ?in/i.test(task)) {
+              found = typeof meta.traceId === "string" && meta.traceId ? meta.traceId : basename(file, ".jsonl");
+              console.log("login trace: " + found + "  (" + task + ")");
+              break;
+            }
+          }
+
+          if (!found) {
+            console.error("::error::no login trace among: " + files.join(", "));
+            process.exit(1);
+          }
+
+          appendFileSync(process.env.GITHUB_OUTPUT ?? "/dev/stdout", "id=" + found + "\n");
+          FIND
+          node /tmp/find-login-trace.mjs
+
+      - name: Export the login trace as a Playwright spec
+        env:
+          TRACE_ID: ${{ steps.login-trace.outputs.id }}
+        run: |
+          set -euo pipefail
+          node packages/cli/dist/cli.js trace export "$TRACE_ID" \
+            --dir .proa/traces \
+            --as playwright \
+            --out /tmp/replay.spec.ts
+          echo "----- /tmp/replay.spec.ts -----"
+          cat /tmp/replay.spec.ts
+          # Keep a copy inside the workspace so it uploads cleanly as an artifact
+          # even when the assertions below fail (that is when you want to read it).
+          cp /tmp/replay.spec.ts .proa/replay.spec.ts
+
+      - name: Assert the exported spec is runnable Playwright code
+        run: |
+          set -euo pipefail
+          if [ ! -s /tmp/replay.spec.ts ]; then
+            echo "::error::trace export produced an empty file"
+            exit 1
+          fi
+          for needle in '@playwright/test' 'getByRole'; do
+            if ! grep -q -- "$needle" /tmp/replay.spec.ts; then
+              echo "::error::exported spec is missing \"$needle\" (stable-selector export regressed)"
+              exit 1
+            fi
+          done
+          echo "exported spec imports @playwright/test and uses getByRole locators"
+
+      - name: Upload exported spec + traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace-export
+          path: .proa
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Optional: actually execute the exported spec. Guarded on apps/browser
+      # shipping a Playwright config, and continue-on-error so it can never gate
+      # a PR. Note the exported spec navigates to the fixture origin
+      # (https://fixture.test/...), which the in-process resolver serves during a
+      # Proa run; against a real browser the config must route that origin to the
+      # locally served fixture site below.
+      - name: (optional) Run the exported spec against the fixture site
+        if: hashFiles('apps/browser/playwright.config.ts', 'apps/browser/playwright.config.js') != ''
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          npx playwright install --with-deps chromium
+          PORT=4321 pnpm --filter @proa/testsite run serve &
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4321/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:4321/ >/dev/null || echo "fixture site did not come up in 30s"
+          cp /tmp/replay.spec.ts apps/browser/replay.spec.ts
+          npx playwright test replay.spec.ts --config apps/browser/playwright.config.ts
+
+  # ---------------------------------------------------------------------------
+  # app — Electron build + Playwright-on-Electron e2e, macOS.
+  #
+  # Skipped while apps/browser is empty (see `detect`). It also `needs: verify`
+  # so we never burn a macOS runner on a commit that already failed the gate.
+  #
+  # Linux variant (add a second job or a matrix entry once the app is stable):
+  #   runs-on: ubuntu-latest
+  #   - run: sudo apt-get update && sudo apt-get install -y xvfb libnss3 libgbm1 libasound2t64
+  #   - run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" \
+  #            pnpm --filter @proa/browser run test:e2e
+  # Electron needs a display on Linux; xvfb-run supplies a virtual one. macOS and
+  # Windows runners have a display already.
+  # ---------------------------------------------------------------------------
+  app:
+    name: Electron app e2e (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 40
+    needs: [detect, verify]
+    if: needs.detect.outputs.app == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.3
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm run build
+
+      - name: Typecheck the app
+        if: needs.detect.outputs.app_typecheck != ''
+        env:
+          APP_PKG: ${{ needs.detect.outputs.app_name }}
+          APP_SCRIPT: ${{ needs.detect.outputs.app_typecheck }}
+        run: pnpm --filter "$APP_PKG" run "$APP_SCRIPT"
+
+      - name: Build the Electron app
+        if: needs.detect.outputs.app_build == 'true'
+        env:
+          APP_PKG: ${{ needs.detect.outputs.app_name }}
+        run: pnpm --filter "$APP_PKG" run build
+
+      - name: No build script in apps/browser
+        if: needs.detect.outputs.app_build != 'true'
+        run: echo "apps/browser has no \"build\" script yet — skipping the Electron build."
+
+      # Playwright-on-Electron. continue-on-error while the suite lands; flip it
+      # off (delete the line) once the app e2e is stable so macOS becomes a gate too.
+      - name: Playwright-on-Electron e2e
+        if: needs.detect.outputs.app_e2e != ''
+        continue-on-error: true
+        env:
+          APP_PKG: ${{ needs.detect.outputs.app_name }}
+          E2E_SCRIPT: ${{ needs.detect.outputs.app_e2e }}
+          HAS_PW_CONFIG: ${{ needs.detect.outputs.app_playwright }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_PW_CONFIG" = "true" ]; then
+            npx playwright install --with-deps chromium || true
+          fi
+          pnpm --filter "$APP_PKG" run "$E2E_SCRIPT"
+
+      - name: No e2e script in apps/browser
+        if: needs.detect.outputs.app_e2e == ''
+        run: echo "apps/browser exposes no test:e2e / e2e script yet — skipping Playwright-on-Electron."
+
+      - name: Upload screenshots and e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-e2e-macos
+          path: |
+            docs/screenshots
+            apps/browser/e2e-artifacts
+            apps/browser/playwright-report
+            apps/browser/test-results
+          if-no-files-found: ignore
+          retention-days: 14

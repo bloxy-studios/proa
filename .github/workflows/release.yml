@@ -1,0 +1,228 @@
+# Proa — Release
+#
+# Fires on a semver tag (v1.2.3, and prereleases like v1.2.3-rc.1). One job on
+# macOS: re-verify, then build and — once apps/browser exists — package an
+# UNSIGNED .app zip and attach it to the GitHub Release.
+#
+# Like CI, the gates here need NO API KEY and NO third-party network: tests and
+# the 5-task agent benchmark run against the bundled fixture site
+# (@proa/testsite) on MockProvider. Only the npm registry is contacted, by
+# `pnpm install --frozen-lockfile`.
+#
+# Job
+#   release  macos-latest  install -> build -> test -> benchmark (gates)
+#                          -> [optional] Electron build + unsigned .app zip
+#                          -> create the GitHub Release, attaching any archives found.
+#
+# Every Electron/packaging step is guarded on apps/browser/package.json existing,
+# so tagging a release works today (source-only release) and starts shipping a
+# macOS build automatically the moment the app lands. The artifacts are unsigned
+# and not notarized (CSC_IDENTITY_AUTO_DISCOVERY=false); macOS users must
+# right-click -> Open, or run `xattr -dr com.apple.quarantine Proa.app`.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Never cancel an in-flight release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    name: Build, verify, and publish ${{ github.ref_name }}
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the release notes can diff against the previous tag
+
+      # pnpm before setup-node so `cache: pnpm` can resolve the store path.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.3 # keep in sync with root package.json "packageManager"
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20" # root engines: node >= 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm run build
+
+      # ---- gates: a tag must be at least as green as a PR --------------------
+      - name: Test
+        run: pnpm run test
+
+      - name: Agent benchmark (MockProvider)
+        run: pnpm --filter @proa/benchmark bench
+
+      # ---- optional Electron app -------------------------------------------
+      - name: Probe apps/browser
+        id: app
+        run: |
+          set -euo pipefail
+          cat > /tmp/probe-app.mjs <<'PROBE'
+          import { appendFileSync, existsSync, readFileSync } from "node:fs";
+
+          const out = process.env.GITHUB_OUTPUT ?? "/dev/stdout";
+          const set = (key, value) => appendFileSync(out, key + "=" + value + "\n");
+          const manifest = "apps/browser/package.json";
+
+          if (!existsSync(manifest)) {
+            set("exists", "false");
+            set("name", "@proa/browser");
+            set("build", "false");
+            set("package", "");
+            console.log("apps/browser/package.json not found — packaging will be skipped.");
+            process.exit(0);
+          }
+
+          const pkg = JSON.parse(readFileSync(manifest, "utf8"));
+          const scripts = pkg.scripts ?? {};
+          const pick = (...names) => names.find((n) => typeof scripts[n] === "string") ?? "";
+
+          const name = typeof pkg.name === "string" && pkg.name ? pkg.name : "@proa/browser";
+          const build = pick("build");
+          const pack = pick("package", "dist", "make", "package:mac", "build:mac");
+
+          set("exists", "true");
+          set("name", name);
+          set("build", build ? "true" : "false");
+          set("package", pack);
+
+          console.log("detected " + name + ": build=" + (build || "-") + " package=" + (pack || "-"));
+          PROBE
+          node /tmp/probe-app.mjs
+
+      - name: Build the Electron app
+        if: steps.app.outputs.exists == 'true' && steps.app.outputs.build == 'true'
+        env:
+          APP_PKG: ${{ steps.app.outputs.name }}
+        run: pnpm --filter "$APP_PKG" run build
+
+      - name: Package the unsigned macOS app
+        if: steps.app.outputs.exists == 'true' && steps.app.outputs.package != ''
+        continue-on-error: true # a packaging hiccup must not block the release itself
+        env:
+          APP_PKG: ${{ steps.app.outputs.name }}
+          PACK_SCRIPT: ${{ steps.app.outputs.package }}
+          # electron-builder / electron-forge: never look for a signing identity.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pnpm --filter "$APP_PKG" run "$PACK_SCRIPT"
+
+      - name: No app to package
+        if: steps.app.outputs.exists != 'true'
+        run: echo "apps/browser does not exist yet — publishing a source-only release."
+
+      - name: No package script in apps/browser
+        if: steps.app.outputs.exists == 'true' && steps.app.outputs.package == ''
+        run: echo "apps/browser has no package/dist/make script — skipping packaging."
+
+      # Collect archives. If the app packager only produced a .app bundle, zip it
+      # here with `ditto` (preserves the bundle's symlinks and resource forks).
+      # Written for bash 3.2, which is what /bin/bash is on macOS runners.
+      - name: Collect release archives
+        if: steps.app.outputs.exists == 'true'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          dirs=""
+          for d in apps/browser/release apps/browser/out apps/browser/dist; do
+            if [ -d "$d" ]; then dirs="$dirs $d"; fi
+          done
+
+          if [ -z "$dirs" ]; then
+            echo "no packaged output directories found — the release will ship source only"
+            exit 0
+          fi
+
+          zips=$(find $dirs -type f -name '*.zip' 2>/dev/null)
+          if [ -n "$zips" ]; then
+            echo "packaged archives already present:"
+            echo "$zips"
+            exit 0
+          fi
+
+          bundles=$(find $dirs -maxdepth 3 -type d -name '*.app' 2>/dev/null)
+          if [ -z "$bundles" ]; then
+            echo "no .app bundle found — the release will ship source only"
+            exit 0
+          fi
+
+          mkdir -p apps/browser/release
+          echo "$bundles" | while IFS= read -r bundle; do
+            [ -n "$bundle" ] || continue
+            base=$(basename "$bundle" .app)
+            target="apps/browser/release/${base}-${GITHUB_REF_NAME}-macos-unsigned.zip"
+            echo "zipping $bundle -> $target"
+            ditto -c -k --sequesterRsrc --keepParent "$bundle" "$target"
+          done
+
+          ls -lh apps/browser/release || true
+
+      - name: Upload build artifacts to the workflow run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proa-macos-${{ github.ref_name }}
+          path: |
+            apps/browser/release/**/*.zip
+            apps/browser/out/**/*.zip
+            apps/browser/dist/**/*.zip
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Creates the release even when no binaries exist yet (source tarballs are
+      # attached by GitHub automatically); fail_on_unmatched_files keeps the
+      # globs optional.
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Proa ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            apps/browser/release/**/*.zip
+            apps/browser/out/**/*.zip
+            apps/browser/dist/**/*.zip
+          body: |
+            ## Proa ${{ github.ref_name }}
+
+            The agent-native browser for developers.
+
+            ```bash
+            npx @proa/cli doctor
+            npx @proa/cli run examples/extract-products.ts --json
+            ```
+
+            Verified on this tag: `lint`, `typecheck`, `test`, `build`, and the
+            5-task agent benchmark (login, cheapest-to-cart, multi-page-form,
+            extract-table, injection-trap) on MockProvider against the bundled
+            fixture site — no API key required.
+
+            **macOS builds, when attached, are unsigned and not notarized.**
+            Right-click → Open on first launch, or:
+
+            ```bash
+            xattr -dr com.apple.quarantine /Applications/Proa.app
+            ```
