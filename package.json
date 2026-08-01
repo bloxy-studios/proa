@@ -1,0 +1,39 @@
+{
+  "name": "proa-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Proa — the agent-native browser for developers.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@10.34.3",
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "better-sqlite3", "electron"]
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/*\" build",
+    "build:app": "pnpm --filter @proa/browser build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "pnpm --filter @proa/benchmark bench",
+    "verify": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "fixtures": "pnpm --filter @proa/testsite serve",
+    "clean": "rimraf \"packages/*/dist\" \"apps/*/out\" \"apps/*/dist\" .turbo"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.11.1",
+    "@types/node": "^22.7.4",
+    "eslint": "^9.11.1",
+    "rimraf": "^6.0.1",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "typescript-eslint": "^8.8.0",
+    "vite-tsconfig-paths": "^5.0.1",
+    "vitest": "^2.1.1"
+  }
+}

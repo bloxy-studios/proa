@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+out/
+*.tsbuildinfo
+
+# Electron packaging
+apps/browser/out/
+apps/browser/release/
+*.app
+*.zip
+*.dmg
+
+# Test / coverage
+coverage/
+.vitest/
+playwright-report/
+test-results/
+apps/browser/e2e-artifacts/
+
+# Local runtime data
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.proa/
+traces/*.jsonl
+!fixtures/**/traces/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "sourceMap": true,
+    "composite": false,
+    "baseUrl": ".",
+    "paths": {
+      "@proa/protocol": ["packages/protocol/src/index.ts"],
+      "@proa/extractor": ["packages/extractor/src/index.ts"],
+      "@proa/permissions": ["packages/permissions/src/index.ts"],
+      "@proa/traces": ["packages/traces/src/index.ts"],
+      "@proa/core": ["packages/core/src/index.ts"],
+      "@proa/sdk": ["packages/sdk/src/index.ts"],
+      "@proa/cli": ["packages/cli/src/index.ts"],
+      "@proa/mcp": ["packages/mcp/src/index.ts"]
+    }
+  }
+}
